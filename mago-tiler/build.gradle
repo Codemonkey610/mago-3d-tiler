@@ -173,6 +173,25 @@ compileJava {
     options.release = 21
 }
 
+tasks.register('devRun', JavaExec) {
+    group = 'application'
+    description = 'Runs mago directly from incrementally compiled classes using one CLI argument per line.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.gaia3d.command.mago.Mago3DTilerMain'
+    doFirst {
+        def argsFilePath = project.findProperty('magoArgsFile')
+        if (!argsFilePath) {
+            throw new GradleException('Missing -PmagoArgsFile=<path>')
+        }
+        def argsFile = file(argsFilePath)
+        if (!argsFile.isFile()) {
+            throw new GradleException("Mago argument file not found: ${argsFile}")
+        }
+        args = argsFile.readLines('UTF-8')
+    }
+}
+
 tasks.named("jib") {
     dependsOn(shadowJar)
     onlyIf {

@@ -15,6 +15,7 @@ import com.gaia3d.util.GeometryUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.geotools.api.feature.simple.SimpleFeature;
 import org.joml.Matrix4d;
+import org.joml.Vector2d;
 import org.joml.Vector3d;
 import org.joml.Vector4d;
 
@@ -466,6 +467,14 @@ public abstract class AbstractGeometryConverter {
 
         PipeType profileType = pipeLineString.getProfileType();
         if (profileType == PipeType.CIRCULAR) {
+            // Most municipal pipe SHP features are a single start/end segment.  Do not
+            // send such a segment through the elbow-network modeller: it may treat the
+            // two end elbows as a reducer and produce a tapered or pointed mesh.  A
+            // straight pipe is always one constant-radius tube; its two Z values only
+            // affect its slope.
+            if (pointsCount == 2) {
+                return createStraightCircularPipe(pipeLineString);
+            }
             // circular pipe.
             float pipeRadius = (float) (pipeLineString.getDiameter() / 2000.0f); // convert to meters from millimeters.
 
@@ -507,6 +516,75 @@ public abstract class AbstractGeometryConverter {
             resultGaiaNode = modeler3D.makeGeometry(tNetwork);
         }
         return resultGaiaNode;
+    }
+
+    /**
+     * Builds the side wall only. Pipe ends intentionally remain open because a pipe
+     * enters a manhole rather than needing an end cap, and this also prevents the
+     * side texture from being displayed on a horizontal end face.
+     */
+    private GaiaNode createStraightCircularPipe(GaiaPipeLineString pipeLineString) {
+        Vector3d start = pipeLineString.getPositions().get(0);
+        Vector3d end = pipeLineString.getPositions().get(1);
+        Vector3d axis = new Vector3d(end).sub(start);
+        double length = axis.length();
+        double radius = pipeLineString.getDiameter() / 2000.0d;
+        if (length < 1e-6d || radius <= 0d) {
+            return null;
+        }
+
+        Vector3d tangent = axis.div(length);
+        Vector3d worldUp = new Vector3d(0, 0, 1);
+        Vector3d radialRight = tangent.cross(worldUp, new Vector3d());
+        if (radialRight.lengthSquared() < 1e-10d) {
+            radialRight.set(1, 0, 0);
+        } else {
+            radialRight.normalize();
+        }
+        Vector3d radialUp = radialRight.cross(tangent, new Vector3d()).normalize();
+
+        final int sides = 24;
+        GaiaPrimitive primitive = new GaiaPrimitive();
+        GaiaSurface surface = new GaiaSurface();
+        primitive.getSurfaces().add(surface);
+
+        // Duplicate the seam vertex so the pipe texture does not interpolate across it.
+        for (int ring = 0; ring < 2; ring++) {
+            Vector3d center = ring == 0 ? start : end;
+            for (int side = 0; side <= sides; side++) {
+                double angle = Math.PI * 2.0d * side / sides;
+                Vector3d normal = new Vector3d(radialRight).mul(Math.cos(angle))
+                        .fma(Math.sin(angle), radialUp).normalize();
+                GaiaVertex vertex = new GaiaVertex();
+                vertex.setPosition(new Vector3d(center).fma(radius, normal));
+                vertex.setNormal(normal);
+                // U wraps around the circumference. V is the physical up/down part of
+                // the pipe wall: v=0 is the underside, where the texture's shadow is.
+                vertex.setTexcoords(new Vector2d(side / (double) sides,
+                        Math.max(0.0d, Math.min(1.0d, (normal.dot(radialUp) + 1.0d) * 0.5d))));
+                primitive.getVertices().add(vertex);
+            }
+        }
+
+        for (int side = 0; side < sides; side++) {
+            int startA = side;
+            int startB = side + 1;
+            int endA = (sides + 1) + side;
+            int endB = endA + 1;
+            GaiaFace faceA = new GaiaFace();
+            faceA.setIndices(new int[]{startA, endA, endB});
+            surface.getFaces().add(faceA);
+            GaiaFace faceB = new GaiaFace();
+            faceB.setIndices(new int[]{startA, endB, startB});
+            surface.getFaces().add(faceB);
+        }
+
+        GaiaMesh mesh = new GaiaMesh();
+        mesh.getPrimitives().add(primitive);
+        GaiaNode node = new GaiaNode();
+        node.setTransformMatrix(new Matrix4d().identity());
+        node.getMeshes().add(mesh);
+        return node;
     }
 
     protected GaiaPrimitive createPrimitiveFromGaiaExtrusionSurfaces(List<GaiaExtrusionSurface> surfaces) {

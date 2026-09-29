@@ -40,7 +40,7 @@ public class ShapeInstanceConverter implements AttributeReader {
 
     private final Parametric3DOptions parametricOptions;
 
-    //read kml file
+    // read kml file
     @Override
     public TileTransformInfo read(File file) {
         log.error("[ERROR] ShapePointReader read method is not implemented yet.");
@@ -57,11 +57,13 @@ public class ShapeInstanceConverter implements AttributeReader {
     @Override
     public void readEach(File file, Consumer<TileTransformInfo> consumer) {
         List<AttributeFilter> attributeFilters = parametricOptions.getAttributeFilters();
-        boolean isDefaultCrs = Objects.equals(parametricOptions.getSourceCrs(), new CRSFactory().createFromName("EPSG:3857"));
+        boolean isDefaultCrs = Objects.equals(parametricOptions.getSourceCrs(),
+                new CRSFactory().createFromName("EPSG:3857"));
         String altitudeColumnName = parametricOptions.getAltitudeColumnName();
         String headingColumnName = parametricOptions.getHeadingColumnName();
         String scaleColumnName = parametricOptions.getScaleColumnName();
         String densityColumnName = parametricOptions.getDensityColumnName();
+        String burialDepthColumnName = parametricOptions.getBurialDepthColumnName();
 
         ShpFiles shpFiles = null;
         ShapefileReader reader = null;
@@ -102,9 +104,16 @@ public class ShapeInstanceConverter implements AttributeReader {
                         defaultHeading = Math.random() * 360.0;
                     }
                     double heading = getNumberAttribute(feature, headingColumnName, defaultHeading);
-                    double altitude = getNumberAttribute(feature, altitudeColumnName, parametricOptions.getAbsoluteAltitudeValue());
+                    double altitude = getNumberAttribute(feature, altitudeColumnName,
+                            parametricOptions.getAbsoluteAltitudeValue());
+                    double burialDepth = burialDepthColumnName == null
+                            ? parametricOptions.getBurialDepthValue()
+                            : getNumberAttribute(feature, burialDepthColumnName, 0.0d);
+                    double unitFactor = elevationUnitFactor(parametricOptions.getPointElevationUnit());
+                    altitude = altitude * unitFactor + parametricOptions.getPointVerticalOffset();
                     double scale = getNumberAttribute(feature, scaleColumnName, parametricOptions.getDefaultScale());
-                    double density = getNumberAttribute(feature, densityColumnName, parametricOptions.getDefaultDensity());
+                    double density = getNumberAttribute(feature, densityColumnName,
+                            parametricOptions.getDefaultDensity());
 
                     if (!attributeFilters.isEmpty()) {
                         boolean filterFlag = false;
@@ -127,7 +136,26 @@ public class ShapeInstanceConverter implements AttributeReader {
                     }
 
                     Map<String, String> attributes = extractAttributes(feature);
-                    emitTileTransformInfos("I3dmFromShape", geom, coordinateReferenceSystem, density, scale, altitude, heading, attributes, parametricOptions.getSourceCrs(), consumer);
+                    double depthMeters = burialDepth * unitFactor;
+                    if (depthMeters > 0.0d && parametricOptions.getPointModelHeight() > 0.001d
+                            && geom instanceof org.locationtech.jts.geom.Point point) {
+                        // Well depth is an absolute vertical target. Horizontal model calibration
+                        // must not shorten or lengthen the requested depth.
+                        double verticalScale = depthMeters / parametricOptions.getPointModelHeight();
+                        // Align the GLB's actual top surface with the requested cover elevation.
+                        // Models are not guaranteed to be centered around their local origin.
+                        // glTF instance models are Y-up. The instance rotation places that local Y
+                        // axis upright in the tileset; POSITION component reordering does not change
+                        // the model's local scale axes. Stretch Y only so burial depth increases the
+                        // well height without widening its footprint.
+                        double topOffset = parametricOptions.getPointModelTop() * verticalScale;
+                        emitPointWithScale("I3dmFromShape", point, altitude - topOffset,
+                                heading, scale, verticalScale, scale, attributes,
+                                parametricOptions.getSourceCrs(), consumer);
+                    } else {
+                        emitTileTransformInfos("I3dmFromShape", geom, coordinateReferenceSystem, density, scale,
+                                altitude, heading, attributes, parametricOptions.getSourceCrs(), consumer);
+                    }
                 }
             }
         } catch (IOException e) {
@@ -151,6 +179,9 @@ public class ShapeInstanceConverter implements AttributeReader {
     }
 
     private double getNumberAttribute(SimpleFeature feature, String column, double defaultValue) {
+        if (column == null || column.isBlank()) {
+            return defaultValue;
+        }
         double result = defaultValue;
         Object attributeLower = feature.getAttribute(column);
         Object attributeUpper = feature.getAttribute(column.toUpperCase());
@@ -162,17 +193,28 @@ public class ShapeInstanceConverter implements AttributeReader {
         }
 
         if (attributeObject instanceof Short) {
-            result = result + (short) attributeObject;
+            result = (short) attributeObject;
         } else if (attributeObject instanceof Integer) {
-            result = result + (int) attributeObject;
+            result = (int) attributeObject;
         } else if (attributeObject instanceof Long) {
-            result = result + (Long) attributeObject;
+            result = (Long) attributeObject;
         } else if (attributeObject instanceof Double) {
-            result = result + (double) attributeObject;
+            result = (double) attributeObject;
         } else if (attributeObject instanceof String) {
             result = Double.parseDouble((String) attributeObject);
         }
         return result;
+    }
+
+    private double elevationUnitFactor(String unit) {
+        if (unit == null) {
+            return 1.0d;
+        }
+        return switch (unit.toLowerCase()) {
+            case "mm" -> 0.001d;
+            case "cm" -> 0.01d;
+            default -> 1.0d;
+        };
     }
 
 }

@@ -76,7 +76,13 @@ public class GaiaSceneRepair {
             if (scene != null) {pruneEmptyNodes(scene.getNodes());}
         }
         int before = scenes.size();
-        scenes.removeIf(s -> s == null || isEmptyScene(s));
+        try {
+            scenes.removeIf(s -> s == null || isEmptyScene(s));
+        } catch (UnsupportedOperationException ignored) {
+            // Some loaders return an immutable scene list. It is still safe to repair
+            // its contents; pruning is optional and must not abort conversion.
+            log.debug("[Repair] Scene list is immutable; skipped scene-list pruning");
+        }
         int removed = before - scenes.size();
         if (removed > 0) {
             log.debug("[Repair] Pruned {} empty scene(s)", removed);

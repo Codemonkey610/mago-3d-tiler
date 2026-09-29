@@ -112,7 +112,23 @@ public class GlobalOptions {
     private String altitudeColumn = null;
     private String headingColumn = null;
     private String diameterColumn = null;
+    private String startElevationColumn = null;
+    private String endElevationColumn = null;
+    private String elevationUnit = "m";
+    private String pipeElevationReference = "bottom";
+    private String burialDepthColumn = null;
+    private String pointElevationUnit = "m";
+    private double burialDepth = 0.0d;
+    private double pointVerticalOffset = 0.0d;
+    private double pointModelHeight = 1.0d;
+    private double pointModelTop = 0.5d;
+    private String startGroundElevationColumn = null;
+    private String endGroundElevationColumn = null;
+    private String startBurialDepthColumn = null;
+    private String endBurialDepthColumn = null;
+    private String pipeBurialUnit = "m";
     private String scaleColumn = null;
+    private double defaultModelScale = 1.0d;
     private String densityColumn = null;
     private double absoluteAltitude = 0.0d;
     private double minimumHeight = 0.0d;
@@ -375,7 +391,23 @@ public class GlobalOptions {
         instance.setAltitudeColumn(command.hasOption(ProcessOptions.ALTITUDE_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.ALTITUDE_COLUMN.getLongName()) : GlobalConstants.DEFAULT_ALTITUDE_COLUMN);
         instance.setHeadingColumn(command.hasOption(ProcessOptions.HEADING_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.HEADING_COLUMN.getLongName()) : GlobalConstants.DEFAULT_HEADING_COLUMN);
         instance.setDiameterColumn(command.hasOption(ProcessOptions.DIAMETER_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.DIAMETER_COLUMN.getLongName()) : GlobalConstants.DEFAULT_DIAMETER_COLUMN);
+        instance.setStartElevationColumn(command.hasOption(ProcessOptions.START_ELEVATION_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.START_ELEVATION_COLUMN.getLongName()) : null);
+        instance.setEndElevationColumn(command.hasOption(ProcessOptions.END_ELEVATION_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.END_ELEVATION_COLUMN.getLongName()) : null);
+        instance.setElevationUnit(command.hasOption(ProcessOptions.ELEVATION_UNIT.getLongName()) ? command.getOptionValue(ProcessOptions.ELEVATION_UNIT.getLongName()) : "m");
+        instance.setPipeElevationReference(command.hasOption(ProcessOptions.PIPE_ELEVATION_REFERENCE.getLongName()) ? command.getOptionValue(ProcessOptions.PIPE_ELEVATION_REFERENCE.getLongName()) : "bottom");
+        instance.setBurialDepthColumn(command.hasOption(ProcessOptions.BURIAL_DEPTH_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.BURIAL_DEPTH_COLUMN.getLongName()) : null);
+        instance.setBurialDepth(command.hasOption(ProcessOptions.BURIAL_DEPTH.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.BURIAL_DEPTH.getLongName())) : 0.0d);
+        instance.setPointElevationUnit(command.hasOption(ProcessOptions.POINT_ELEVATION_UNIT.getLongName()) ? command.getOptionValue(ProcessOptions.POINT_ELEVATION_UNIT.getLongName()) : "m");
+        instance.setPointVerticalOffset(command.hasOption(ProcessOptions.POINT_VERTICAL_OFFSET.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.POINT_VERTICAL_OFFSET.getLongName())) : 0.0d);
+        instance.setPointModelHeight(command.hasOption(ProcessOptions.POINT_MODEL_HEIGHT.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.POINT_MODEL_HEIGHT.getLongName())) : 1.0d);
+        instance.setPointModelTop(command.hasOption(ProcessOptions.POINT_MODEL_TOP.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.POINT_MODEL_TOP.getLongName())) : instance.getPointModelHeight() / 2.0d);
+        instance.setStartGroundElevationColumn(command.hasOption(ProcessOptions.START_GROUND_ELEVATION_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.START_GROUND_ELEVATION_COLUMN.getLongName()) : null);
+        instance.setEndGroundElevationColumn(command.hasOption(ProcessOptions.END_GROUND_ELEVATION_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.END_GROUND_ELEVATION_COLUMN.getLongName()) : null);
+        instance.setStartBurialDepthColumn(command.hasOption(ProcessOptions.START_BURIAL_DEPTH_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.START_BURIAL_DEPTH_COLUMN.getLongName()) : null);
+        instance.setEndBurialDepthColumn(command.hasOption(ProcessOptions.END_BURIAL_DEPTH_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.END_BURIAL_DEPTH_COLUMN.getLongName()) : null);
+        instance.setPipeBurialUnit(command.hasOption(ProcessOptions.PIPE_BURIAL_UNIT.getLongName()) ? command.getOptionValue(ProcessOptions.PIPE_BURIAL_UNIT.getLongName()) : "m");
         instance.setScaleColumn(command.hasOption(ProcessOptions.SCALE_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.SCALE_COLUMN.getLongName()) : GlobalConstants.DEFAULT_SCALE_COLUMN);
+        instance.setDefaultModelScale(command.hasOption(ProcessOptions.DEFAULT_MODEL_SCALE.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.DEFAULT_MODEL_SCALE.getLongName())) : GlobalConstants.DEFAULT_SCALE);
         instance.setDensityColumn(command.hasOption(ProcessOptions.DENSITY_COLUMN.getLongName()) ? command.getOptionValue(ProcessOptions.DENSITY_COLUMN.getLongName()) : GlobalConstants.DEFAULT_DENSITY_COLUMN);
 
         instance.setAbsoluteAltitude(command.hasOption(ProcessOptions.ABSOLUTE_ALTITUDE.getLongName()) ? Double.parseDouble(command.getOptionValue(ProcessOptions.ABSOLUTE_ALTITUDE.getLongName())) : GlobalConstants.DEFAULT_ABSOLUTE_ALTITUDE);
@@ -419,11 +451,11 @@ public class GlobalOptions {
             instance.setTilingMode(TilingMode.EXPLICIT);
         }
 
-        if (isParametric) {
-            if (outputFormat.equals(FormatType.B3DM)) {
-                isRefineAdd = true;
-            }
-        }
+        // Parametric B3DM content is present at more than one tile level.  ADD
+        // renders parent and child meshes together, causing coincident pipe walls
+        // to flicker and appear as dark wedges or tapered triangles.  Keep the
+        // requested/default REPLACE refinement so only the appropriate detail level
+        // is visible at a time.
         instance.setRotateX(rotateXAxis);
         instance.setRefineAdd(isRefineAdd);
         instance.setGlb(command.hasOption(ProcessOptions.DEBUG_GLB.getLongName()));

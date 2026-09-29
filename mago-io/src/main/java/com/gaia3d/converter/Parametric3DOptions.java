@@ -16,6 +16,17 @@ public class Parametric3DOptions {
     private String heightColumnName;
     private String altitudeColumnName;
     private String diameterColumnName;
+    private String startElevationColumnName;
+    private String endElevationColumnName;
+    private String elevationUnit;
+    private String pipeElevationReference;
+    private String burialDepthColumnName;
+    private String pointElevationUnit;
+    private String startGroundElevationColumnName;
+    private String endGroundElevationColumnName;
+    private String startBurialDepthColumnName;
+    private String endBurialDepthColumnName;
+    private String pipeBurialUnit;
     private String scaleColumnName;
     private String densityColumnName;
     private String headingColumnName;
@@ -29,6 +40,11 @@ public class Parametric3DOptions {
     private double defaultScale;
     private double defaultDensity;
     private double defaultHeading;
+    private double burialDepthValue;
+    private double pointVerticalOffset;
+    private double pointModelHeight;
+    /** Source-model local Y coordinate of its top surface. */
+    private double pointModelTop;
     private boolean randomHeading;
 
     private CoordinateReferenceSystem sourceCrs;

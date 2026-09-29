@@ -70,6 +70,8 @@ public class ShapeConverter extends AbstractGeometryConverter implements Convert
         String heightColumnName = parametricOptions.getHeightColumnName();
         String altitudeColumnName = parametricOptions.getAltitudeColumnName();
         String diameterColumnName = parametricOptions.getDiameterColumnName();
+        String startElevationColumnName = parametricOptions.getStartElevationColumnName();
+        String endElevationColumnName = parametricOptions.getEndElevationColumnName();
 
         double absoluteAltitudeValue = parametricOptions.getAbsoluteAltitudeValue();
         double minimumHeightValue = parametricOptions.getMinimumHeightValue();
@@ -197,9 +199,32 @@ public class ShapeConverter extends AbstractGeometryConverter implements Convert
                         Vector3d position = new Vector3d(x, y, z); // usually crs 3857
                         positions.add(position);
                     }
-                    double diameter = getDiameter(feature, diameterColumnName);
-
-                    GaiaPipeLineString pipeLineString = GaiaPipeLineString.builder().id(feature.getID()).profileType(PipeType.CIRCULAR).diameter(diameter).properties(attributes).positions(positions).build();
+                    String profileValue = getAttributeValue(feature, diameterColumnName).trim();
+                    float[] rectangularSize = parseRectangularSizeInMeters(profileValue);
+                    double diameter = rectangularSize == null ? getDiameter(feature, diameterColumnName) : 0.0d;
+                    double halfSectionHeight = rectangularSize == null
+                            ? diameter / 1000.0d / 2.0d
+                            : rectangularSize[1] / 2.0d;
+                    applyElevationProfile(feature, positions, startElevationColumnName,
+                            endElevationColumnName, halfSectionHeight);
+                    GaiaPipeLineString pipeLineString;
+                    if (rectangularSize != null) {
+                        pipeLineString = GaiaPipeLineString.builder()
+                                .id(feature.getID())
+                                .profileType(PipeType.RECTANGULAR)
+                                .rectangularSize(rectangularSize)
+                                .properties(attributes)
+                                .positions(positions)
+                                .build();
+                    } else {
+                        pipeLineString = GaiaPipeLineString.builder()
+                                .id(feature.getID())
+                                .profileType(PipeType.CIRCULAR)
+                                .diameter(diameter)
+                                .properties(attributes)
+                                .positions(positions)
+                                .build();
+                    }
                     pipeLineString.setOriginalFilePath(input.getPath());
                     pipeLineStrings.add(pipeLineString);
                 }
@@ -285,6 +310,23 @@ public class ShapeConverter extends AbstractGeometryConverter implements Convert
             throw new RuntimeException(e);
         }
         return sceneTemps;
+    }
+
+    static float[] parseRectangularSizeInMeters(String profileValue) {
+        if (profileValue == null) {
+            return null;
+        }
+        String[] parts = profileValue.trim().split("\\s*[xX×]\\s*");
+        if (parts.length != 2) {
+            return null;
+        }
+        float widthMeters = Float.parseFloat(parts[0]) / 1000.0f;
+        float heightMeters = Float.parseFloat(parts[1]) / 1000.0f;
+        if (!Float.isFinite(widthMeters) || !Float.isFinite(heightMeters)
+                || widthMeters <= 0.0f || heightMeters <= 0.0f) {
+            throw new IllegalArgumentException("Rectangular pipe dimensions must be positive finite numbers: " + profileValue);
+        }
+        return new float[]{widthMeters, heightMeters};
     }
 
     protected List<GaiaScene> convert(File file) {
@@ -399,18 +441,20 @@ public class ShapeConverter extends AbstractGeometryConverter implements Convert
                     ProjCoordinate projCoordinate = new ProjCoordinate(point.x, point.y, point.z);
                     ProjCoordinate centerWgs84 = GlobeUtils.transform(crs, projCoordinate);
 
-                    double defaultHeight = 2.0;
                     double heightOffset = 0.0;
 
                     if (pipeLineString.getProfileType() == PipeType.CIRCULAR) {
                         heightOffset = pipeLineString.getDiameter() / 1000 / 2;
                     } else if (pipeLineString.getProfileType() == PipeType.RECTANGULAR) {
-                        heightOffset = pipeLineString.getRectangularSize()[1] / 1000 / 2;
+                        heightOffset = pipeLineString.getRectangularSize()[1] / 2;
                     }
 
-                    point.set(centerWgs84.x, centerWgs84.y, point.z - heightOffset - defaultHeight);
-                    bbox.addPoint(point);
+                    point.set(centerWgs84.x, centerWgs84.y, point.z - heightOffset);
                 }
+                // EPSG:4326 points need a bbox too. Otherwise getCenter() returns
+                // (0, 0, 0), producing huge local coordinates whose float conversion
+                // collapses sub-meter pipe rings into a cone tip.
+                bbox.addPoint(point);
             }
         }
 
@@ -506,6 +550,62 @@ public class ShapeConverter extends AbstractGeometryConverter implements Convert
             GaiaSceneTempGroup sceneTemp = GaiaSceneTempGroup.builder().tempScene(scenes).tempFile(tempFile).build();
             sceneTemp.minimize(tempFile);
             sceneTemps.add(sceneTemp);
+        }
+    }
+
+    private void applyElevationProfile(SimpleFeature feature, List<Vector3d> positions,
+                                       String startColumn, String endColumn, double halfSectionHeight) {
+        boolean depthMode = parametricOptions.getStartBurialDepthColumnName() != null
+                && parametricOptions.getEndBurialDepthColumnName() != null;
+        if ((!depthMode && (startColumn == null || endColumn == null)) || positions.size() < 2) {
+            return;
+        }
+        String unit = depthMode ? parametricOptions.getPipeBurialUnit() : parametricOptions.getElevationUnit();
+        double unitFactor = switch (String.valueOf(unit).toLowerCase(Locale.ROOT)) {
+            case "mm" -> 0.001d;
+            case "cm" -> 0.01d;
+            default -> 1.0d;
+        };
+        double startElevation;
+        double endElevation;
+        if (depthMode) {
+            // The base map is flat: a recorded depth maps directly below Z=0.
+            // Do not derive a second elevation from ground-height attributes here.
+            startElevation = -parseElevation(feature, parametricOptions.getStartBurialDepthColumnName()) * unitFactor;
+            endElevation = -parseElevation(feature, parametricOptions.getEndBurialDepthColumnName()) * unitFactor;
+        } else {
+            startElevation = parseElevation(feature, startColumn) * unitFactor;
+            endElevation = parseElevation(feature, endColumn) * unitFactor;
+        }
+        double[] cumulativeLengths = new double[positions.size()];
+        for (int i = 1; i < positions.size(); i++) {
+            Vector3d previous = positions.get(i - 1);
+            Vector3d current = positions.get(i);
+            cumulativeLengths[i] = cumulativeLengths[i - 1]
+                    + Math.hypot(current.x - previous.x, current.y - previous.y);
+        }
+        double totalLength = cumulativeLengths[cumulativeLengths.length - 1];
+        for (int i = 0; i < positions.size(); i++) {
+            double ratio = totalLength > 0.0d ? cumulativeLengths[i] / totalLength
+                    : (double) i / (positions.size() - 1);
+            double referencedElevation = startElevation + (endElevation - startElevation) * ratio;
+            double centerElevation = switch (String.valueOf(parametricOptions.getPipeElevationReference()).toLowerCase(Locale.ROOT)) {
+                case "top" -> referencedElevation - halfSectionHeight;
+                case "center" -> referencedElevation;
+                default -> referencedElevation + halfSectionHeight;
+            };
+            // convertPipeLineStrings applies the legacy 2 m burial and half-height offset.
+            // Store a compensated source Z so the exported center line lands at the requested elevation.
+            positions.get(i).z = centerElevation + halfSectionHeight + 2.0d;
+        }
+    }
+
+    private double parseElevation(SimpleFeature feature, String column) {
+        String value = getAttributeValue(feature, column).trim();
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("Invalid pipe elevation in column " + column + ": " + value, exception);
         }
     }
 }

@@ -235,6 +235,26 @@ public interface AttributeReader {
         consumer.accept(tileTransformInfo);
     }
 
+    default void emitPointWithScale(String name, Point point, double altitude, double heading,
+                                    double scaleX, double scaleY, double scaleZ,
+                                    Map<String, String> attributes,
+                                    org.locationtech.proj4j.CoordinateReferenceSystem targetCrs,
+                                    Consumer<TileTransformInfo> consumer) {
+        double x = point.getX();
+        double y = point.getY();
+        Vector3d position;
+        if (targetCrs != null) {
+            ProjCoordinate transformed = GlobeUtils.transform(targetCrs, new ProjCoordinate(x, y, 0.0d));
+            position = new Vector3d(transformed.x, transformed.y, altitude);
+        } else {
+            position = new Vector3d(x, y, altitude);
+        }
+        consumer.accept(TileTransformInfo.builder().name(name).position(position)
+                .heading(heading).tilt(0.0d).roll(0.0d)
+                .scaleX(scaleX).scaleY(scaleY).scaleZ(scaleZ)
+                .properties(attributes).build());
+    }
+
     default String castStringFromObject(Object object, String defaultValue) {
         String result;
         if (object == null) {
